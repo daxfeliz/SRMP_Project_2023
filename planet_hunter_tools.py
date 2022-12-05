@@ -3,7 +3,8 @@ from matplotlib import pyplot as plt
 import lightkurve as lk
 
 #N
-
+class SearchError(Exception):
+    pass
 def download_data(starname,mission,quarter_number,cadence):
     from lightkurve.search import _search_products
 
@@ -139,8 +140,9 @@ def process_multiple_lightcurves(starname,mission,quarter_number,cadence):
             else:
                 plot_tpf=False
             tpf,lc = process_single_lightcurve(starname,mission,quarter,cadence,plot_tpf)
-            if (lc==None):
-                continue
+            if type(lc) is None:
+                if (lc==None):
+                    continue
             if q==int(quarter_number[0]):
                 first_tpf=tpf
             all_times  = np.append(all_times ,lc.time.value)
