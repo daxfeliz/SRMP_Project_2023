@@ -21,10 +21,14 @@ def download_data(starname,mission,quarter_number,cadence):
             ffi_or_tpf='Target Pixel'        
     
     if mission=='TESS':
-        search_string=_search_products(starname, radius=degrees,\
-                                       filetype=ffi_or_tpf, \
-                                       cadence=cadence,\
-                                       mission=mission,sector=quarter_number)
+        try:
+            search_string=_search_products(starname, radius=degrees,\
+                                           filetype=ffi_or_tpf, \
+                                           cadence=cadence,\
+                                           mission=mission,sector=quarter_number)
+        except SearchError as e:
+            print('No ',cadence,' cadence ',mission,' data for ',starname,' in Sector ',quarter_number,'!')
+            return None
     if mission=='Kepler':
         search_string = lk.search_targetpixelfile(starname,author=mission, \
                               quarter=quarter_number,\
@@ -74,6 +78,9 @@ def process_single_lightcurve(starname,mission,quarter_number,cadence,plot_tpf=F
             new_cadence='long'
             print('Switching from',cadence,'to',new_cadence)
             tpf = download_data(starname,mission,quarter_number,new_cadence)
+            if tpf==None:
+                print('ERROR: see earlier error messages. No data for this target in this sector/quarter')
+                lc = None
     else:
         print('TPF type:',type(tpf))    
     # use default mission pipeline aperture mask
@@ -132,6 +139,8 @@ def process_multiple_lightcurves(starname,mission,quarter_number,cadence):
             else:
                 plot_tpf=False
             tpf,lc = process_single_lightcurve(starname,mission,quarter,cadence,plot_tpf)
+            if (lc==None):
+                continue
             if q==int(quarter_number[0]):
                 first_tpf=tpf
             all_times  = np.append(all_times ,lc.time.value)
