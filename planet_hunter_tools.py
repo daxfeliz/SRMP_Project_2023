@@ -63,6 +63,107 @@ def download_data(starname,mission,quarter_number,cadence):
     data = search_string_filtered.download()
     return data
 
+
+def process_single_lightcurve(starname,mission,quarter_number,cadence,plot_tpf=False):
+    
+    tpf = download_data(starname,mission,quarter_number,cadence)    
+    if tpf == None:
+        print('No TargetPixelFile return from search!')
+        print('TPF type:',type(tpf))
+        if cadence=='short':
+            new_cadence='long'
+            print('Switching from',cadence,'to',new_cadence)
+            tpf = download_data(starname,mission,quarter_number,new_cadence)
+    else:
+        print('TPF type:',type(tpf))    
+    # use default mission pipeline aperture mask
+    lc = tpf.to_lightcurve(aperture_mask=tpf.pipeline_mask)
+    #
+    # mask out "bad" data points of poorer photometric quality
+    quality_mask = tpf.quality==0
+    lc = lc[quality_mask] 
+    #
+    
+    #check if aperture_mask is a good mask to use:
+    nanmask = np.where(np.isfinite(lc.flux.value))[0]
+    if len(nanmask)<1: # if there aren't any finite values then we need to do a new mask
+        new_aperture_mask = tpf.create_threshold_mask(threshold=1, reference_pixel='center')
+        lc = tpf.to_lightcurve(aperture_mask=new_aperture_mask)
+        if plot_tpf==True:
+            tpf.plot(frame=0,aperture_mask=new_aperture_mask)
+            plt.show()        
+        from lightkurve.correctors import PLDCorrector
+        tpf = PLDCorrector(tpf)
+        lc = tpf.correct(pca_components=10)
+    else:
+        if plot_tpf==True:
+            tpf.plot(frame=0,aperture_mask='pipeline')
+            plt.show()             
+    #
+    return tpf, lc
+
+
+def process_multiple_lightcurves(starname,mission,quarter_number,cadence):
+    if type(quarter_number)==list:
+        all_times = []
+        all_fluxes =[]
+        all_errors =[]
+        #
+        for q in quarter_number:
+            quarter = int(q)                
+            if q==int(quarter_number[0]):
+                plot_tpf=True
+            else:
+                plot_tpf=False
+            tpf,lc = process_single_lightcurve(starname,mission,quarter,cadence,plot_tpf)
+            if q==int(quarter_number[0]):
+                first_tpf=tpf
+            all_times  = np.append(all_times ,lc.time.value)
+            all_fluxes = np.append(all_fluxes,lc.flux.value/np.nanmedian(lc.flux.value))# normalize each sector
+            all_errors = np.append(all_errors,lc.flux_err.value/np.nanmedian(lc.flux.value))
+        final_lc = lk.LightCurve(time=all_times,flux=all_fluxes,flux_err=all_errors)
+    else:
+        quarter=int(quarter_number[0])
+        tpf,lc = process_single_lightcurve(starname,mission,quarter,cadence)
+        if q==int(quarter_number[0]):
+            first_tpf=tpf        
+        final_lc = lk.LightCurve(time=lc.time.value,flux=lc.flux.value/np.nanmedian(lc.flux.value),\
+                                 flux_err=lc.flux_err.value/np.nanmedian(lc.flux.value))
+        
+    return first_tpf, final_lc
+        
+
+
+
+def phasefold(time,flux,period,T0):
+    """
+    This function will phase-fold the input light curve (time, flux)
+    using a Mid-transit time and orbital period. The resulting phase
+    is centered on the input Mid-transit time so that the transit
+    occurs at phase 0.
+
+    Input Parameters
+    ----------
+    time: array
+        An array of timestamps from TESS observations.
+    TO : float
+        The Mid-transit time of a periodic event.
+    period : float
+        An orbital period of a periodic event.
+    flux : array
+        An array of flux values from TESS observations.
+    Returns
+    -------
+        * phase : array
+            An array of Orbital phase of the phase-folded light curve.
+        * flux : array
+            An array of flux values from TESS observations of the
+            phase-folded light curve.
+    """
+    phase=(time- T0 + 0.5*period) % period - 0.5*period
+    ind=np.argsort(phase, axis=0)
+    return phase[ind],flux[ind] 
+
 def everything(savepath,starname, mission, quarter_number, cadence, \
                smoothing_window, Nsigma, minP, maxP, Nfreq):
     import os
@@ -77,34 +178,39 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     from matplotlib import pyplot as plt
 
     # use download function to get light curve images:
-    tpf = download_data(starname,mission,quarter_number,cadence)    
-    if type(tpf) is None:
-        print('No TargetPixelFile return from search!')
-        print('TPF type:',type(tpf))
-    else:
-        print('TPF type:',type(tpf))
+#     tpf = download_data(starname,mission,quarter_number,cadence)    
+#     if type(tpf) is None:
+#         print('No TargetPixelFile return from search!')
+#         print('TPF type:',type(tpf))
+#     else:
+#         print('TPF type:',type(tpf))
 
-    
-    lc = tpf.to_lightcurve(aperture_mask=tpf.pipeline_mask)
-    # # NEW    
-    lc = lc[tpf.quality==0] 
-    # # NEW    
+    # use default mission pipeline aperture mask
+    #lc = tpf.to_lightcurve(aperture_mask=tpf.pipeline_mask)
+    #
+    # mask out "bad" data points of poorer photometric quality
+    #quality_mask = tpf.quality==0
+    #lc = lc[quality_mask] 
+    #
     
     #check if aperture_mask is a good mask to use:
-    nanmask = np.where(np.isfinite(lc.flux.value))[0]
-    if len(nanmask)<1: # if there aren't any finite values then we need to do a new mask
-        new_aperture_mask = tpf.create_threshold_mask(threshold=1, reference_pixel='center')
-        lc = tpf.to_lightcurve(aperture_mask=new_aperture_mask)
+    #nanmask = np.where(np.isfinite(lc.flux.value))[0]
+    #if len(nanmask)<1: # if there aren't any finite values then we need to do a new mask
+    #    new_aperture_mask = tpf.create_threshold_mask(threshold=1, reference_pixel='center')
+#         lc = tpf.to_lightcurve(aperture_mask=new_aperture_mask)
                 
-        tpf.plot(frame=0,aperture_mask=new_aperture_mask)
-        plt.show()
+#         tpf.plot(frame=0,aperture_mask=new_aperture_mask)
+#         plt.show()
         
-        from lightkurve.correctors import PLDCorrector
-        tpf = PLDCorrector(tpf)
-        lc = tpf.correct(pca_components=10)
-    else:
-        tpf.plot(frame=0,aperture_mask='pipeline')
-        plt.show()        
+#         from lightkurve.correctors import PLDCorrector
+#         tpf = PLDCorrector(tpf)
+#         lc = tpf.correct(pca_components=10)
+#     else:
+#         tpf.plot(frame=0,aperture_mask='pipeline')
+#         plt.show()  
+
+
+    tpf,lc = process_multiple_lightcurves(starname,mission,quarter_number,cadence)
     
     
     def convert_window_size_to_Npts(lc,smoothing_window):
@@ -139,6 +245,9 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     
     # now do transit search and fold light curve on best fit 
     # transit time (T0) and orbital period:
+    if maxP==None:
+        maxP = (np.max(flat.time.value)-np.min(flat.time.value))
+        maxP = maxP/3 #to allow at least 3 transits for detection
     flat_periodogram = flat.to_periodogram(method="bls", period=np.arange(minP, maxP, Nfreq))
     # # NEW    
     best_fit_period = flat_periodogram.period_at_max_power.value
@@ -167,9 +276,7 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     
     print('Best fit period: ',str(np.round(best_fit_period,3))+' days')
     print('Best fit planet Radius: ',str(np.round(best_fit_planet_radius,3))+' Earth Radii')
-    # # NEW    
-    
-    folded_flat = flat.fold(period=best_fit_period, epoch_time=best_fit_T0)
+    # # NEW       
     
     def plot_transit_times(flat,T0,P,ax2):
         import numpy as np
@@ -215,8 +322,8 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     ax2.set_xlabel('Time')
     ax2.set_ylabel('Normalized Flux')        
     
-    ax1.legend(loc='upper right')
-    ax2.legend(loc='upper right')    
+    ax1.legend(loc='upper right',framealpha=1,fancybox=True)
+    ax2.legend(loc='upper right',framealpha=1,fancybox=True)
     
     fig.tight_layout(pad=1)
     plt.show()
@@ -227,13 +334,19 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     ax1 = fig.add_subplot(211)
     ax2 = fig.add_subplot(212)  
     
-    flat_periodogram.plot(ax=ax1,color='black')
+    #flat_periodogram.plot(ax=ax1,color='black')
+    SDE = (flat_periodogram.power.value - np.nanmedian(flat_periodogram.power.value)) / np.nanstd(flat_periodogram.power.value)
+    ax1.plot(flat_periodogram.period.value,SDE,'k-')
+    ax1.set_xlabel('Period [days]')
+    ax1.set_ylabel('BLS Signal Detection Efficiency')
+    
+    
     # plot vertical line near peak BLS period 
     ax1.axvline(x = best_fit_period,color='lightgreen',\
                 alpha=0.5,zorder=-100,linewidth=5)
     # # NEW    
     # plotting aliases aka harmonics
-    for a in range(2,21):
+    for a in range(2,100):
         if best_fit_period*a < np.max(flat_periodogram.period.value):
             ax1.axvline(x = best_fit_period*a ,color='lightgreen',\
                         alpha=0.5,zorder=-100,linewidth=3,linestyle='--')
@@ -242,8 +355,8 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
                         alpha=0.5,zorder=-100,linewidth=3,linestyle='--')            
     ax1.set_title('Best fit orbital period: '+str(np.round(best_fit_period,3))+' days')
     # # NEW    
-    
-    ax2.plot(24*folded_flat.time.value,folded_flat.flux.value/np.nanmedian(folded_flat.flux.value),'r.')       
+    phasefolded, fluxfolded = phasefold(np.array(flat.time.value),np.array(flat.flux.value),best_fit_period,best_fit_T0)
+    ax2.plot(24*phasefolded, fluxfolded/np.nanmedian(fluxfolded),'r.')       
     
     
     # let's use the best fit orbital period, T0 and transit duration
@@ -252,9 +365,11 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
                                        transit_time=best_fit_T0,
                                        duration=best_fit_Duration)
     #lets fold our box model:
-    folded_BLS = BLS_model.fold(period=best_fit_period, epoch_time=best_fit_T0)
-    ax2.plot(24*folded_BLS.time.value,\
-             folded_BLS.flux.value/np.nanmedian(folded_BLS.flux.value),\
+    #folded_BLS = BLS_model.fold(period=best_fit_period, epoch_time=best_fit_T0)
+    BLS_phasefolded, BLS_modelfolded = phasefold(np.array(BLS_model.time.value), np.array(BLS_model.flux.value),\
+                                             best_fit_period,best_fit_T0)
+    #
+    ax2.plot(24*BLS_phasefolded, BLS_modelfolded/np.nanmedian(BLS_modelfolded),\
              'b-',linewidth=3)       
     # # NEW    
     if mission=='Kepler':
@@ -262,17 +377,20 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     if mission=='TESS':
         ax2.set_xlabel('Phase [Hours since '+str(np.round(best_fit_T0,3))+' BTJD]')        
     ax2.set_ylabel('Normalized Flux')
-    ax2.set_title('Best fit planet radius: '+str(np.round(best_fit_planet_radius,3))+' Earth Radii')
+    ax2.set_title('Best fit Planet Radius: '+str(np.round(best_fit_planet_radius,3))+' Earth Radii ; Best fit Transit Duration: '+str(np.round(24*best_fit_Duration,3))+' Hours')
     # # NEW    
     
     N_durations = 3.5
     # set a xlim based on N transit duration widths 
     # of the folded light curve
-    ax2.set_xlim(-24*N_durations*best_fit_Duration,\
-                 +24*N_durations*best_fit_Duration)
+    if best_fit_period > 1:
+        ax2.set_xlim(-24*N_durations*best_fit_Duration,\
+                     +24*N_durations*best_fit_Duration)
+    else:
+        ax2.set_xlim(-8,8)
     
     # let's also plot a horizontal line to show how deep our box model is
-    ax2.axhline(y=np.nanmedian(folded_flat.flux.value/np.nanmedian(folded_flat.flux.value)) - best_fit_Depth,color='green',zorder=-100)
+    ax2.axhline(y=np.nanmedian(fluxfolded/np.nanmedian(fluxfolded)) - best_fit_Depth,color='green',zorder=-100)
     #
     fig.tight_layout(pad=1)
     fig.savefig(savepath+starname+'_BLS_result.png',bbox_inches='tight')
