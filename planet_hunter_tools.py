@@ -90,8 +90,12 @@ def process_single_lightcurve(starname,mission,quarter_number,cadence,plot_tpf=F
         new_aperture_mask = tpf.create_threshold_mask(threshold=1, reference_pixel='center')
         lc = tpf.to_lightcurve(aperture_mask=new_aperture_mask)
         if plot_tpf==True:
-            median_frame = np.min(np.where(tpf.flux.value==(np.nanmedian(tpf.flux.value,axis=0)))[0])
-            tpf.plot(frame=median_frame,aperture_mask=new_aperture_mask)
+            median_mask = np.where(tpf.flux.value==(np.nanmedian(tpf.flux.value,axis=0)))[0]
+            if len(median_mask)>0:
+                median_frame=np.min(median_mask)
+            else:
+                median_frame=0
+                tpf.plot(frame=median_frame,aperture_mask=new_aperture_mask)
             plt.show()        
         from lightkurve.correctors import PLDCorrector
         try:
@@ -103,8 +107,13 @@ def process_single_lightcurve(starname,mission,quarter_number,cadence,plot_tpf=F
             lc=lc
     else:
         if plot_tpf==True:
-            median_frame = np.min(np.where(tpf.flux.value==(np.nanmedian(tpf.flux.value,axis=0)))[0])            
-            tpf.plot(frame=median_frame,aperture_mask='pipeline')
+            median_mask = np.where(tpf.flux.value==(np.nanmedian(tpf.flux.value,axis=0)))[0]
+            if len(median_mask)>0:
+                median_frame=np.min(median_mask)
+            else:
+                median_frame=0
+            if cadence=='short':
+                tpf.plot(frame=median_frame,aperture_mask='pipeline')
             plt.show()             
     #
     return tpf, lc
