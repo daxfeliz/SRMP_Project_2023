@@ -3,8 +3,7 @@ from matplotlib import pyplot as plt
 import lightkurve as lk
 
 
-class SearchError(Exception):
-    pass
+from lightkurve.search import SearchError
 
 def download_data(starname,mission,quarter_number,cadence):
     from lightkurve.search import _search_products
