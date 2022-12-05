@@ -2,9 +2,10 @@ import numpy as np
 from matplotlib import pyplot as plt
 import lightkurve as lk
 
-#N
+
 class SearchError(Exception):
     pass
+
 def download_data(starname,mission,quarter_number,cadence):
     from lightkurve.search import _search_products
 
