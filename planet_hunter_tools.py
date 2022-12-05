@@ -90,14 +90,21 @@ def process_single_lightcurve(starname,mission,quarter_number,cadence,plot_tpf=F
         new_aperture_mask = tpf.create_threshold_mask(threshold=1, reference_pixel='center')
         lc = tpf.to_lightcurve(aperture_mask=new_aperture_mask)
         if plot_tpf==True:
-            tpf.plot(frame=0,aperture_mask=new_aperture_mask)
+            median_frame = np.min(np.where(tpf.flux.value==(np.nanmedian(tpf.flux.value,axis=0)))[0])
+            tpf.plot(frame=median_frame,aperture_mask=new_aperture_mask)
             plt.show()        
         from lightkurve.correctors import PLDCorrector
-        tpf = PLDCorrector(tpf)
-        lc = tpf.correct(pca_components=10)
+        try:
+            tpf = PLDCorrector(tpf)
+            lc = tpf.correct(pca_components=10)
+        except ValueError:
+            print('Bad Pixel mask. Could not do PLD!')
+            print('')
+            lc=lc
     else:
         if plot_tpf==True:
-            tpf.plot(frame=0,aperture_mask='pipeline')
+            median_frame = np.min(np.where(tpf.flux.value==(np.nanmedian(tpf.flux.value,axis=0)))[0])            
+            tpf.plot(frame=median_frame,aperture_mask='pipeline')
             plt.show()             
     #
     return tpf, lc
@@ -120,7 +127,7 @@ def process_multiple_lightcurves(starname,mission,quarter_number,cadence):
                 first_tpf=tpf
             all_times  = np.append(all_times ,lc.time.value)
             all_fluxes = np.append(all_fluxes,lc.flux.value/np.nanmedian(lc.flux.value))# normalize each sector
-            all_errors = np.append(all_errors,lc.flux_err.value/np.nanmedian(lc.flux.value))
+            all_errors = np.append(all_errors,lc.flux_err.value)
         final_lc = lk.LightCurve(time=all_times,flux=all_fluxes,flux_err=all_errors)
     else:
         quarter=int(quarter_number[0])
