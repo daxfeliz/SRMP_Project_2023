@@ -1,9 +1,200 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import lightkurve as lk
-
-
 from lightkurve.search import SearchError
+
+
+# grid functions for transit searching
+# constants from transitleastsquares
+#
+# astrophysical constants
+import astropy.units as u
+from astropy import constants as const
+R_sun = u.R_sun.to(u.cm) # in cm
+M_sun = u.M_sun.to(u.g) # in grams
+G = const.G.cgs.value #cm^3 per g per s^2
+R_earth = u.R_earth.to(u.cm) # in cm
+R_jup = u.R_jupiter.to(u.cm) # in cm
+SECONDS_PER_DAY = u.day.to(u.second)
+
+
+# For the duration grid
+FRACTIONAL_TRANSIT_DURATION_MAX = 0.12
+M_STAR_MIN = 0.1
+M_STAR_MAX = 1.0
+R_STAR_MIN = 0.13
+R_STAR_MAX = 3.5
+DURATION_GRID_STEP = 1.1
+OVERSAMPLING_FACTOR = 5
+N_TRANSITS_MIN = 3
+MINIMUM_PERIOD_GRID_SIZE = 100
+
+def T14(
+    R_s, M_s, P, upper_limit=FRACTIONAL_TRANSIT_DURATION_MAX, small=False
+):
+    """Input:  Stellar radius and mass; planetary period
+               Units: Solar radius and mass; days
+       Output: Maximum planetary transit duration T_14max
+               Unit: Fraction of period P"""
+    import numpy
+    pi = numpy.pi
+
+    P = P * SECONDS_PER_DAY
+    R_s = R_sun * R_s
+    M_s = M_sun * M_s
+
+    if small:  # small planet assumption
+        T14max = R_s * ((4 * P) / (pi * G * M_s)) ** (1 / 3)
+    else:  # planet size 2 R_jup
+        T14max = (R_s + 2 * R_jup) * (
+            (4 * P) / (pi * G * M_s)
+        ) ** (1 / 3)
+
+    result = T14max / P
+    if result > upper_limit:
+        result = upper_limit
+    return result
+
+
+def duration_grid(periods, shortest, log_step=DURATION_GRID_STEP):
+    import numpy    
+    duration_max = T14(
+        R_s=R_STAR_MAX,
+        M_s=M_STAR_MAX,
+        P=numpy.min(periods),
+        small=False  # large planet for long transit duration
+    )
+    duration_min = T14(
+        R_s=R_STAR_MIN,
+        M_s=M_STAR_MIN,
+        P=numpy.max(periods),
+        small=True  # small planet for short transit duration
+    )
+
+    durations = [duration_min]
+    current_depth = duration_min
+    while current_depth * log_step < duration_max:
+        current_depth = current_depth * log_step
+        durations.append(current_depth)
+    durations.append(duration_max)  # Append endpoint. Not perfectly spaced.
+    return durations
+
+
+def period_grid(
+    R_star,
+    M_star,
+    time_span,
+    period_min=0,
+    period_max=float("inf"),
+    oversampling_factor=OVERSAMPLING_FACTOR,
+    n_transits_min=N_TRANSITS_MIN,
+):
+    """Returns array of optimal sampling periods for transit search in light curves
+       Following Ofir (2014, A&A, 561, A138)"""
+    import numpy
+    pi = numpy.pi
+
+    if R_star < 0.01:
+        text = (
+            "Warning: R_star was set to 0.01 for period_grid (was unphysical: "
+            + str(R_star)
+            + ")"
+        )
+        warnings.warn(text)
+        R_star = 0.1
+
+    if R_star > 10000:
+        text = (
+            "Warning: R_star was set to 10000 for period_grid (was unphysical: "
+            + str(R_star)
+            + ")"
+        )
+        warnings.warn(text)
+        R_star = 10000
+
+    if M_star < 0.01:
+        text = (
+            "Warning: M_star was set to 0.01 for period_grid (was unphysical: "
+            + str(M_star)
+            + ")"
+        )
+        warnings.warn(text)
+        M_star = 0.01
+
+    if M_star > 1000:
+        text = (
+            "Warning: M_star was set to 1000 for period_grid (was unphysical: "
+            + str(M_star)
+            + ")"
+        )
+        warnings.warn(text)
+        M_star = 1000
+
+    R_star = R_star * R_sun
+    M_star = M_star * M_sun
+    time_span = time_span * SECONDS_PER_DAY  # seconds
+
+    # boundary conditions
+    f_min = n_transits_min / time_span
+    f_max = 1.0 / (2 * pi) * np.sqrt(G * M_star / (3 * R_star) ** 3)
+
+    # optimal frequency sampling, Equations (5), (6), (7)
+    A = (
+        (2 * pi) ** (2.0 / 3)
+        / pi
+        * R_star
+        / (G * M_star) ** (1.0 / 3)
+        / (time_span * oversampling_factor)
+    )
+    C = f_min ** (1.0 / 3) - A / 3.0
+    N_opt = (f_max ** (1.0 / 3) - f_min ** (1.0 / 3) + A / 3) * 3 / A
+
+    X = numpy.arange(N_opt) + 1
+    f_x = (A / 3 * X + C) ** 3
+    P_x = 1 / f_x
+
+    # Cut to given (optional) selection of periods
+    periods = P_x / SECONDS_PER_DAY
+    selected_index = numpy.where(
+        numpy.logical_and(periods > period_min, periods <= period_max)
+    )
+
+    number_of_periods = numpy.size(periods[selected_index])
+
+    if number_of_periods > 10 ** 6:
+        text = (
+            "period_grid generates a very large grid ("
+            + str(number_of_periods)
+            + "). Recommend to check physical plausibility for stellar mass, radius, and time series duration."
+        )
+        warnings.warn(text)
+
+    if number_of_periods < MINIMUM_PERIOD_GRID_SIZE:
+        if time_span < 5 * SECONDS_PER_DAY:
+            time_span = 5 * SECONDS_PER_DAY
+        warnings.warn(
+            "period_grid defaults to R_star=1 and M_star=1 as given density yielded grid with too few values"
+        )
+        return period_grid(
+            R_star=1, M_star=1, time_span=time_span / SECONDS_PER_DAY
+        )
+    else:
+        return periods[selected_index]  # periods in [days]
+    
+# some loose mass-radius relationships for main-sequence stars    
+def radius_from_mass(M_star):
+    if M_star<=1:
+        R_star = M_star**0.8
+    if M_star>1:
+        R_star = M_star**0.57
+    return R_star
+def mass_from_radius(R_star):
+    if R_star<=1:
+        M_star = R_star**(1/0.8)
+    if R_star>1:
+        M_star = R_star**(1/0.57)        
+    return M_star
+
 
 def download_data(starname,mission,quarter_number,cadence):
     from lightkurve.search import _search_products
@@ -191,7 +382,7 @@ def phasefold(time,flux,period,T0):
     ind=np.argsort(phase, axis=0)
     return phase[ind],flux[ind] 
 
-def everything(savepath,starname, mission, quarter_number, cadence, \
+def everything(savepath,starname, M_star,R_star, mission, quarter_number, cadence, \
                smoothing_window, Nsigma, minP, maxP, Nfreq):
     import os
     # checking if savepath exists
@@ -203,7 +394,14 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     
     import lightkurve as lk
     from matplotlib import pyplot as plt
-
+    
+    
+    # check stellar mass and radius:
+    if (np.isnan(M_star)==True) & (np.isnan(R_star)==False):
+        M_star = mass_from_radius(R_star)
+    if (np.isnan(R_star)==True) & (np.isnan(M_star)==False):
+        R_star = radius_from_mass(M_star)        
+        
     # use download function to get light curve images:
 #     tpf = download_data(starname,mission,quarter_number,cadence)    
 #     if type(tpf) is None:
@@ -279,13 +477,8 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     # NEW
     # define duration and period grids
     import requests
-    from transitleastsquares import period_grid,duration_grid, catalog_info
+    #from transitleastsquares import period_grid,duration_grid, catalog_info
     ID = int(starname[4:])
-    try:
-        qld, M_star, M_star_min, M_star_max, R_star, R_star_min, R_star_max = catalog_info(TIC_ID=ID)
-    except (requests.exceptions.ConnectionError,requests.exceptions.HTTPError) as E:
-        clock.sleep(5) #pause 5 seconds then try again
-        qld, M_star, M_star_min, M_star_max, R_star, R_star_min, R_star_max = catalog_info(TIC_ID=ID)
     #
     # First lets make the grid
     LCduration = (np.max(flat.time.value)-np.min(flat.time.value)) #duration of light curve
@@ -293,11 +486,19 @@ def everything(savepath,starname, mission, quarter_number, cadence, \
     #
     oversampling_factor = 5
     duration_grid_step=1.05
-    period_grid = period_grid(R_star=R_star, M_star=M_star, time_span=LCduration,\
+    periods = period_grid(R_star=R_star, M_star=M_star, time_span=LCduration,\
                           period_min=minP, period_max=maxP,oversampling_factor=oversampling_factor)
-    duration_grid= duration_grid(period_grid,shortest=None,log_step=duration_grid_step)
+    durations= duration_grid(periods,shortest=None,log_step=duration_grid_step)
     #
-    flat_periodogram = flat.to_periodogram(method="bls", period=period_grid, duration=duration_grid)
+    import time as clock
+    start = clock.time()
+    flat_periodogram = flat.to_periodogram(method="bls", period=periods, duration=durations)
+    end = clock.time()
+    runtime = end-start
+    if runtime > 60:
+        print('BLS took ',runtime/60,'minutes')
+    if runtime < 60:
+        print('BLS took ',runtime,'seconds')
     # # NEW    
     best_fit_period = flat_periodogram.period_at_max_power.value
     best_fit_T0 = flat_periodogram.transit_time_at_max_power.value
