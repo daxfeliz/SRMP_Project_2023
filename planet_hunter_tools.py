@@ -652,8 +652,11 @@ def summarize_results(starname,mission,tpf,lc,flat,trend,flat_periodogram,savepa
     else:
         ax5.set_xlim(-8,8)
     #
-    N_depths = 5
-    ax5.set_ylim(np.nanmedian(fluxfolded)-N_depths*best_fit_Depth,np.nanmedian(fluxfolded)+N_depths*best_fit_Depth)
+#     N_depths = 5
+#     ax5.set_ylim(np.nanmedian(fluxfolded)-N_depths*best_fit_Depth,np.nanmedian(fluxfolded)+N_depths*best_fit_Depth)
+    ylim_mask = np.where(np.abs(phasefolded) < N_durations*best_fit_Duration)[0]
+    ax5.set_ylim(np.nanmedian(fluxfolded[ylim_mask])-3*np.nanstd(fluxfolded[ylim_mask]),\
+                 np.nanmedian(fluxfolded[ylim_mask])+3*np.nanstd(fluxfolded[ylim_mask]))
     
     # let's also plot a horizontal line to show how deep our box model is
     ax5.axhline(y=np.nanmedian(fluxfolded/np.nanmedian(fluxfolded)) - best_fit_Depth,color='orange',zorder=-100)    
